@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import pool from '../config/database';
 import { ScraperService } from '../services/scraperService';
 import geminiService from '../services/geminiService';
-import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 export class ProductController {
   // Optimize a product listing by ASIN
@@ -43,22 +42,22 @@ export class ProductController {
       }
 
       // Step 3: Check if product exists in database
-      const [existingProducts] = await pool.query<RowDataPacket[]>(
-        'SELECT id FROM products WHERE asin = ?',
+      const existingProducts = await pool.query(
+        'SELECT id FROM products WHERE asin = $1',
         [asin]
       );
 
       let productId: number;
 
-      if (existingProducts.length > 0) {
+      if (existingProducts.rows.length > 0) {
         // Update existing product
-        productId = existingProducts[0].id;
+        productId = existingProducts.rows[0].id;
         await pool.query(
           `UPDATE products SET 
-            original_title = ?,
-            original_bullet_points = ?,
-            original_description = ?,
-            product_details = ?,
+            original_title = $1,
+            original_bullet_points = $2,
+            original_description = $3,
+            product_details = $4,
             optimized_title = ?,
             optimized_bullet_points = ?,
             optimized_description = ?,
@@ -79,12 +78,12 @@ export class ProductController {
         );
       } else {
         // Insert new product
-        const [result] = await pool.query<ResultSetHeader>(
+        const result = await pool.query(
           `INSERT INTO products (
             asin, original_title, original_bullet_points, original_description,
             product_details, optimized_title, optimized_bullet_points,
             optimized_description, keywords
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
           [
             asin,
             productData.title,
@@ -97,7 +96,7 @@ export class ProductController {
             JSON.stringify(optimizedContent.keywords)
           ]
         );
-        productId = result.insertId;
+        productId = result.rows[0].id;
       }
 
       // Step 4: Save to optimization history (only if optimization succeeded)
@@ -113,7 +112,7 @@ export class ProductController {
             optimized_bullet_points,
             optimized_description, 
             keywords
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             productId,
             productData.title,
@@ -165,16 +164,16 @@ export class ProductController {
 
     try {
       // First check if product exists
-      const [productRows] = await pool.query<RowDataPacket[]>(
-        'SELECT id FROM products WHERE asin = ?',
+      const productRows = await pool.query(
+        'SELECT id FROM products WHERE asin = $1',
         [asin]
       );
 
-      if (productRows.length === 0) {
+      if (productRows.rows.length === 0) {
         return res.json({ success: true, data: [] });
       }
 
-      const [rows] = await pool.query<RowDataPacket[]>(
+      const rows = await pool.query(
         `SELECT 
           h.id, 
           h.optimized_title, 
@@ -188,12 +187,12 @@ export class ProductController {
           h.product_details
          FROM optimization_history h
          JOIN products p ON h.product_id = p.id
-         WHERE p.asin = ?
+         WHERE p.asin = $1
          ORDER BY h.created_at DESC`,
         [asin]
       );
 
-      const history = rows.map(row => {
+      const history = rows.rows.map(row => {
         let bulletPoints = [];
         let keywords = [];
         let originalBulletPoints = [];
@@ -281,16 +280,16 @@ export class ProductController {
     const { asin } = req.params;
 
     try {
-      const [rows] = await pool.query<RowDataPacket[]>(
-        'SELECT * FROM products WHERE asin = ?',
+      const result = await pool.query(
+        'SELECT * FROM products WHERE asin = $1',
         [asin]
       );
 
-      if (rows.length === 0) {
+      if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Product not found' });
       }
 
-      const product = rows[0];
+      const product = result.rows[0];
       
       // Helper function to safely parse JSON
       const safeJsonParse = (value: any, defaultValue: any) => {
@@ -335,7 +334,7 @@ export class ProductController {
   // Get all ASINs with optimization history
   static async getAllAsins(req: Request, res: Response) {
     try {
-      const [rows] = await pool.query<RowDataPacket[]>(
+      const result = await pool.query(
         `SELECT 
           p.asin, 
           p.original_title,
@@ -347,7 +346,7 @@ export class ProductController {
          ORDER BY p.updated_at DESC`
       );
 
-      const asins = rows.map(row => ({
+      const asins = result.rows.map((row: any) => ({
         asin: row.asin,
         title: row.original_title,
         lastUpdated: row.updated_at,
@@ -371,21 +370,21 @@ export class ProductController {
 
     try {
       // Get the previous optimization
-      const [historyRows] = await pool.query<RowDataPacket[]>(
+      const historyResult = await pool.query(
         `SELECT 
           h.*, p.asin, p.original_title, p.original_bullet_points,
           p.original_description, p.product_details
          FROM optimization_history h
          JOIN products p ON h.product_id = p.id
-         WHERE h.id = ?`,
+         WHERE h.id = $1`,
         [historyId]
       );
 
-      if (historyRows.length === 0) {
+      if (historyResult.rows.length === 0) {
         return res.status(404).json({ error: 'History record not found' });
       }
 
-      const historyRecord = historyRows[0];
+      const historyRecord = historyResult.rows[0];
       const productId = historyRecord.product_id;
 
       // Helper function to safely parse JSON
@@ -435,12 +434,12 @@ export class ProductController {
       if (!optimizationFailed) {
         await pool.query(
           `UPDATE products SET 
-            optimized_title = ?,
-            optimized_bullet_points = ?,
-            optimized_description = ?,
-            keywords = ?,
+            optimized_title = $1,
+            optimized_bullet_points = $2,
+            optimized_description = $3,
+            keywords = $4,
             updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?`,
+          WHERE id = $5`,
           [
             newOptimized.title,
             JSON.stringify(newOptimized.bulletPoints),
@@ -462,7 +461,7 @@ export class ProductController {
             optimized_bullet_points,
             optimized_description, 
             keywords
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             productId,
             historyRecord.optimized_title,
