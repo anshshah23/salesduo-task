@@ -126,11 +126,13 @@ function App() {
         </div>
 
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label htmlFor="asin-input" className="block text-sm font-medium text-gray-700 mb-2">
             Enter Amazon ASIN
           </label>
           <div className="flex gap-3">
             <input
+              id="asin-input"
+              name="asin"
               type="text"
               value={asin}
               onChange={(e) => setAsin(e.target.value)}
